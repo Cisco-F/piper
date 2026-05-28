@@ -1,5 +1,6 @@
 from functools import cached_property
 
+import numpy as np
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -69,7 +70,15 @@ class PiperRobot(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        raise NotImplementedError("Piper observation interface is not implemented yet.")
+        observation: RobotObservation = {}
+
+        for motor_name in self._motors_ft:
+            observation[motor_name] = 0.0
+
+        for camera_name, (height, width, channels) in self._cameras_ft.items():
+            observation[camera_name] = np.zeros((height, width, channels), dtype=np.uint8)
+
+        return observation
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
