@@ -1,5 +1,6 @@
 import argparse
 import json
+import signal
 import time
 from pathlib import Path
 
@@ -93,6 +94,22 @@ def prompt_episode_outcome() -> str:
         print("Please enter s, f, or u.")
 
 
+def install_stop_handler() -> tuple[dict[str, bool], object]:
+    stop_requested = {"value": False}
+    previous_handler = signal.getsignal(signal.SIGINT)
+
+    def request_stop(signum: int, frame: object) -> None:
+        del signum, frame
+        if stop_requested["value"]:
+            print("\nStop already requested. Waiting for the current frame to finish.")
+            return
+        stop_requested["value"] = True
+        print("\nStop requested. Finishing the current frame, then saving the episode.")
+
+    signal.signal(signal.SIGINT, request_stop)
+    return stop_requested, previous_handler
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Record a minimal Piper teleop episode.")
     parser.add_argument("--task", default="pick_cube", help="Task name stored in metadata.")
@@ -173,6 +190,7 @@ def main() -> None:
     camera_shape = (args.camera_height, args.camera_width, 3)
     stop_reason = "completed"
     episode_path: Path | None = None
+    stop_requested, previous_sigint_handler = install_stop_handler()
 
     try:
         robot.connect()
@@ -201,7 +219,7 @@ def main() -> None:
         with recorder_context as recorder:
             episode_path = Path(recorder.episode_dir)
             print(f"Recording to {recorder.episode_dir}")
-            print("Press Ctrl+C once to stop and save the episode.")
+            print("Press Ctrl+C once to stop after the current frame and save the episode.")
             while True:
                 loop_started_at = time.monotonic()
                 observation = robot.get_observation()
@@ -216,6 +234,10 @@ def main() -> None:
 
                 recorder.record_frame(observation=observation, action=action)
 
+                if stop_requested["value"]:
+                    stop_reason = "manual"
+                    break
+
                 if args.duration is not None and time.monotonic() - started_at >= args.duration:
                     stop_reason = "duration"
                     break
@@ -226,6 +248,7 @@ def main() -> None:
         stop_reason = "manual"
         print("\nStopping recording.")
     finally:
+        signal.signal(signal.SIGINT, previous_sigint_handler)
         if robot.is_connected:
             robot.disconnect()
 

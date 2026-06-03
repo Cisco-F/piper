@@ -259,6 +259,38 @@ LEADER_RIGHT_CAN=<leader_right_can> \
 ./scripts/run_record_pick_cube.sh
 ```
 
+## 训练 ACT 策略
+
+采集完成后，先确认数据集里有 `meta/info.json` 和 `data/**/*.parquet`，再启动训练：
+
+```bash
+./scripts/train_act.sh
+```
+
+默认配置会读取：
+
+```text
+data/lerobot/local/piper_pick_cube
+```
+
+也可以用环境变量覆盖：
+
+```bash
+REPO_ID=local/piper_towel_fold \
+ROOT=data/lerobot \
+JOB_NAME=act_piper_towel_fold \
+STEPS=20000 \
+BATCH_SIZE=16 \
+DEVICE=cuda \
+./scripts/train_act.sh
+```
+
+ACT 默认从头训练，不需要先拉取模型；如果后续把 `POLICY_TYPE` 换成需要预训练权重的策略，LeRobot 可能会在第一次运行时从 Hugging Face 下载对应 checkpoint。训练跑到 `STEPS` 指定步数并写出 checkpoint 后结束，输出目录默认是：
+
+```text
+outputs/train/<job_name>
+```
+
 录制结果会写到：
 
 ```text
@@ -286,7 +318,7 @@ data/lerobot/local/piper_pick_cube/
 
 ### 手动结束一条 episode
 
-如果不传 `--duration`，录制会一直进行。任务成功、失败或你想丢弃这次尝试时，按一次 `Ctrl+C` 停止；脚本会正常 `save_episode()`，不会直接丢掉这一条。
+如果不传 `--duration`，录制会一直进行。任务成功、失败或你想丢弃这次尝试时，按一次 `Ctrl+C` 停止；脚本会等当前帧完整写完后再正常 `save_episode()`，不会在图片写入中途切断 episode。
 
 如果加了 `--prompt-outcome`，停止后会让你输入：
 
@@ -303,6 +335,16 @@ data/lerobot/local/piper_pick_cube/episode_outcomes.jsonl
 ```
 
 这份文件用于后续筛选成功/失败 episode。现在它是旁路标注文件，不会改变 LeRobot 原始 dataset schema。
+
+### 为什么录制中会看到 PNG
+
+LeRobot 在录制视频特征时，会先把每帧图像写成临时 PNG，再在 `save_episode()` / `finalize()` 阶段编码成 `videos/` 里的视频，同时把 `observation.state`、`action`、episode index 等低维数据写入 `data/` 下的 Parquet。
+
+所以如果录制被中途强行打断，可能只看到临时 PNG，看不到完整 Parquet，或者出现类似 `episode_index expected length ...` 的列长度错误。当前脚本已经把 `Ctrl+C` 改成帧边界停止，正常停止后应该能同时得到：
+
+- `videos/`: 三路相机视频
+- `data/`: 低维状态和 action 的 Parquet
+- `meta/`: 数据集元信息
 
 ## 常见问题排查
 

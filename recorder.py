@@ -211,6 +211,7 @@ class LeRobotEpisodeRecorder:
         self.dataset: Any | None = None
         self.dataset_root = self.root / repo_id
         self.episode_dir = self.dataset_root
+        self._frame_count = 0
 
     def __enter__(self) -> "LeRobotEpisodeRecorder":
         self.start()
@@ -260,12 +261,14 @@ class LeRobotEpisodeRecorder:
             frame[f"observation.images.{camera_name}"] = image
 
         self.dataset.add_frame(frame)
+        self._frame_count += 1
 
     def close(self) -> None:
         if self.dataset is None:
             return
 
-        self.dataset.save_episode()
+        if self._frame_count > 0:
+            self.dataset.save_episode()
         finalize = getattr(self.dataset, "finalize", None)
         if callable(finalize):
             finalize()
