@@ -1,9 +1,11 @@
 import argparse
 import time
 
+from lerobot.cameras.opencv import OpenCVCameraConfig
+
 from __init__ import PiperRobotConfig
 from piper import PiperRobot
-from recorder import PiperEpisodeRecorder
+from recorder import LeRobotEpisodeRecorder, PiperEpisodeRecorder
 
 
 def resolve_action_source(args: argparse.Namespace) -> str:
@@ -15,16 +17,80 @@ def resolve_action_source(args: argparse.Namespace) -> str:
     return "follower"
 
 
+def parse_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_camera_ref(value: str) -> int | str:
+    return int(value) if value.isdigit() else value
+
+
+def make_camera_configs(args: argparse.Namespace) -> dict[str, OpenCVCameraConfig]:
+    camera_refs = parse_csv(args.camera_indices)
+    if not camera_refs:
+        return {}
+
+    camera_names = parse_csv(args.camera_names)
+    if camera_names and len(camera_names) != len(camera_refs):
+        raise ValueError("--camera-names must have the same number of items as --camera-indices.")
+
+    if not camera_names:
+        default_names = ["cam_top", "cam_left", "cam_right"]
+        camera_names = default_names[: len(camera_refs)]
+        if len(camera_names) < len(camera_refs):
+            camera_names.extend(f"cam_{index}" for index in range(len(camera_names), len(camera_refs)))
+
+    return {
+        camera_name: OpenCVCameraConfig(
+            index_or_path=parse_camera_ref(camera_ref),
+            fps=args.camera_fps,
+            width=args.camera_width,
+            height=args.camera_height,
+        )
+        for camera_name, camera_ref in zip(camera_names, camera_refs, strict=True)
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Record a minimal Piper teleop episode.")
     parser.add_argument("--task", default="pick_cube", help="Task name stored in metadata.")
-    parser.add_argument("--output-dir", default="data/raw", help="Directory for recorded episodes.")
+    parser.add_argument(
+        "--dataset-format",
+        choices=("lerobot", "jsonl"),
+        default="lerobot",
+        help="Storage format for the recorded episode.",
+    )
+    parser.add_argument("--repo-id", default="local/piper_pick_cube", help="LeRobot dataset repo id.")
+    parser.add_argument("--root", default="data/lerobot", help="LeRobot dataset root directory.")
+    parser.add_argument("--robot-type", default="piper", help="Robot type stored in LeRobot metadata.")
+    parser.add_argument("--no-videos", action="store_true", help="Store image frames instead of videos.")
+    parser.add_argument("--output-dir", default="data/raw", help="Directory for JSONL debug episodes.")
     parser.add_argument("--fps", type=float, default=10.0, help="Recording frequency.")
     parser.add_argument("--duration", type=float, default=None, help="Optional duration in seconds.")
     parser.add_argument("--follower-left-can", default="can2", help="Left follower CAN interface.")
     parser.add_argument("--follower-right-can", default="can0", help="Right follower CAN interface.")
     parser.add_argument("--leader-left-can", default=None, help="Left leader CAN interface.")
     parser.add_argument("--leader-right-can", default=None, help="Right leader CAN interface.")
+    parser.add_argument(
+        "--camera-indices",
+        default="",
+        help="Comma-separated OpenCV camera indices or paths, e.g. 0,2,4.",
+    )
+    parser.add_argument(
+        "--camera-names",
+        default="",
+        help="Comma-separated camera names, e.g. cam_top,cam_left,cam_right.",
+    )
+    parser.add_argument("--camera-width", type=int, default=640, help="Camera capture width.")
+    parser.add_argument("--camera-height", type=int, default=480, help="Camera capture height.")
+    parser.add_argument("--camera-fps", type=int, default=30, help="Camera capture fps.")
+    parser.add_argument(
+        "--image-format",
+        choices=("jpg", "jpeg", "png"),
+        default="jpg",
+        help="Image format for saved camera frames.",
+    )
+    parser.add_argument("--image-quality", type=int, default=95, help="JPEG image quality.")
     parser.add_argument(
         "--action-source",
         choices=("auto", "leader", "follower"),
@@ -36,6 +102,7 @@ def main() -> None:
     if args.fps <= 0:
         raise ValueError("--fps must be greater than 0.")
 
+    camera_configs = make_camera_configs(args)
     action_source = resolve_action_source(args)
     if action_source == "leader" and not (args.leader_left_can and args.leader_right_can):
         raise ValueError("Leader action recording requires both --leader-left-can and --leader-right-can.")
@@ -45,20 +112,38 @@ def main() -> None:
         leader_right_port=args.leader_right_can,
         follower_left_port=args.follower_left_can,
         follower_right_port=args.follower_right_can,
-        cameras={},
+        cameras=camera_configs,
     )
     robot = PiperRobot(config)
     period = 1.0 / args.fps
     started_at = time.monotonic()
+    camera_shape = (args.camera_height, args.camera_width, 3)
 
     try:
         robot.connect()
-        with PiperEpisodeRecorder(
-            output_dir=args.output_dir,
-            task=args.task,
-            fps=args.fps,
-            action_source=action_source,
-        ) as recorder:
+        if args.dataset_format == "lerobot":
+            recorder_context = LeRobotEpisodeRecorder(
+                root=args.root,
+                repo_id=args.repo_id,
+                task=args.task,
+                fps=int(args.fps),
+                camera_names=list(camera_configs.keys()),
+                camera_shape=camera_shape,
+                robot_type=args.robot_type,
+                use_videos=not args.no_videos,
+            )
+        else:
+            recorder_context = PiperEpisodeRecorder(
+                output_dir=args.output_dir,
+                task=args.task,
+                fps=args.fps,
+                action_source=action_source,
+                camera_names=list(camera_configs.keys()),
+                image_format=args.image_format,
+                image_quality=args.image_quality,
+            )
+
+        with recorder_context as recorder:
             print(f"Recording to {recorder.episode_dir}")
             print("Press Ctrl+C to stop.")
             while True:

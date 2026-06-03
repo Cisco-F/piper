@@ -42,9 +42,11 @@ python test_read_state.py --left-can can2 --right-can can0
 - [piper.py](/home/murphy/code/piper-towel-fold/piper.py:1)
   `LeRobot` 风格的 `PiperRobot` 实现，负责连接、读取观测、读取主臂 action、断开连接。
 - [recorder.py](/home/murphy/code/piper-towel-fold/recorder.py:1)
-  最小 episode recorder，将每帧写入 JSONL。
+  LeRobot episode recorder，直接写 `LeRobotDataset`；同时保留 JSONL 调试 recorder。
 - [record_episode.py](/home/murphy/code/piper-towel-fold/record_episode.py:1)
   第一轮试采集入口，适合先录“抓方块”。
+- [test_cameras.py](/home/murphy/code/piper-towel-fold/test_cameras.py:1)
+  探测 OpenCV 摄像头编号，并保存每路快照。
 - [__init__.py](/home/murphy/code/piper-towel-fold/__init__.py:1)
   `PiperRobotConfig` 定义。
 - [technical-roadmap.md](/home/murphy/code/piper-towel-fold/technical-roadmap.md:1)
@@ -163,13 +165,16 @@ right: j1= -11.222 deg, j2=  22.333 deg, j3= -33.444 deg, j4=  44.555 deg, j5= -
 
 ## 录制第一段抓方块试采集
 
-在确认主臂已经能稳定控制从臂后，可以先录一段最小 episode。这个阶段的目标是验证数据链路，不是直接产出最终训练数据。
+在确认主臂已经能稳定控制从臂后，可以直接录成 `LeRobotDataset`。LeRobot 官方格式会把低维状态和 action 存成 Parquet，把多路图像编码成视频，并写入 `meta/` 元数据。
 
 先用从臂状态作为 action 做 smoke test：
 
 ```bash
 python record_episode.py \
   --task pick_cube \
+  --dataset-format lerobot \
+  --repo-id local/piper_pick_cube \
+  --root data/lerobot \
   --follower-left-can can2 \
   --follower-right-can can0 \
   --action-source follower \
@@ -182,6 +187,9 @@ python record_episode.py \
 ```bash
 python record_episode.py \
   --task pick_cube \
+  --dataset-format lerobot \
+  --repo-id local/piper_pick_cube \
+  --root data/lerobot \
   --follower-left-can can2 \
   --follower-right-can can0 \
   --leader-left-can <leader_left_can> \
@@ -190,15 +198,65 @@ python record_episode.py \
   --fps 10
 ```
 
+### 接入 3 个摄像头
+
+先探测摄像头编号：
+
+```bash
+python test_cameras.py --indices 0,1,2,3,4,5
+```
+
+脚本会把能打开的画面保存到：
+
+```text
+data/camera_probe/
+```
+
+看快照确认 3 个可用编号后，用这些编号开始录制。示例中假设 3 个摄像头是 `0,2,4`：
+
+```bash
+python record_episode.py \
+  --task pick_cube \
+  --dataset-format lerobot \
+  --repo-id local/piper_pick_cube \
+  --root data/lerobot \
+  --follower-left-can can2 \
+  --follower-right-can can0 \
+  --leader-left-can <leader_left_can> \
+  --leader-right-can <leader_right_can> \
+  --action-source leader \
+  --camera-indices 0,2,4 \
+  --camera-names cam_top,cam_left,cam_right \
+  --camera-width 640 \
+  --camera-height 480 \
+  --camera-fps 30 \
+  --fps 10
+```
+
 录制结果会写到：
 
 ```text
-data/raw/episode_YYYYmmdd_HHMMSS/
-├── metadata.json
-└── frames.jsonl
+data/lerobot/local/piper_pick_cube/
+├── data/
+├── meta/
+└── videos/
 ```
 
-建议第一天只录 5 到 10 条短 episode，每条 20 到 40 秒。每条录完后先检查 `frames.jsonl` 是否连续、左右关节字段是否完整、夹爪字段是否变化，再考虑接相机和转成 `LeRobot` 标准数据集。
+每一帧写入的 LeRobot keys 是：
+
+- `observation.state`: 14 维，从臂左右关节和夹爪状态
+- `action`: 14 维，优先来自主臂；也可以用 follower smoke test
+- `observation.images.cam_top`
+- `observation.images.cam_left`
+- `observation.images.cam_right`
+
+如果需要临时调试原始逐帧 JSON，也可以加：
+
+```bash
+--dataset-format jsonl
+```
+
+建议第一天只录 5 到 10 条短 episode，每条 20 到 40 秒。每条录完后先用 `LeRobotDataset` 加载检查 episode 数、帧数、图像和低维字段是否正常。
 
 ## 常见问题排查
 
@@ -283,18 +341,17 @@ sudo ip link set can0 up
 
 ## 下一步是不是直接正式采集数据
 
-现在可以开始最小试采集，但还不建议直接进入正式大规模采集。
+现在可以开始 LeRobot 格式的最小试采集，但还不建议直接进入正式大规模采集。
 
 当前适合做的是：
 
-- 用“抓方块”验证 episode 录制
+- 用“抓方块”验证 LeRobot episode 录制
 - 固定 task、fps、开始/结束规则
 - 确认 action 字段到底来自主臂还是从臂状态
 - 录几条短 episode 后检查数据质量
 
 正式训练前还需要补：
 
-- 相机图像落盘
-- 图像、状态、action 的时间戳对齐
-- `LeRobot` 标准 dataset 转换或直接接入
+- 图像、状态、action 的时间戳质量检查
+- 数据集加载、可视化和训练配置
 - 成功/失败标签和 episode SOP

@@ -15,14 +15,13 @@
 - 已补充 CAN 拉起脚本和状态读取启动脚本
 - 已确认主臂控制从臂功能良好
 - 已确定第一个练手任务为“抓方块”
-- 已新增最小 JSONL episode recorder
+- 已新增 LeRobot episode recorder，并保留 JSONL 调试 recorder
+- 已新增摄像头探测脚本和图片落盘格式
 
 未完成：
 
 - 动作下发
-- 相机接入采集闭环
-- `LeRobot` 标准化录制流程
-- 数据集结构、任务标注、训练配置
+- 数据集加载检查、任务标注、训练配置
 
 ## 近期目标
 
@@ -85,7 +84,7 @@
 
 1. 明确主臂是否接入工控机 CAN；如果没有，先用 follower 状态作为 action smoke test。
 2. 验证左右臂同步和夹爪映射。
-3. 录 5 到 10 条短 episode，检查 action 和 observation 是否连续。
+3. 录 5 到 10 条 LeRobot 短 episode，检查 action 和 observation 是否连续。
 4. 测试长时间运行稳定性。
 
 ### Milestone 3.5: 最小试录
@@ -93,14 +92,14 @@
 目标：
 
 - 先录“抓方块”的短 episode
-- 验证 episode 文件、时间戳、action 和 observation 字段
-- 为接相机和转 `LeRobot` 数据集做准备
+- 直接写成 `LeRobotDataset`
+- 验证 episode 文件、时间戳、action、observation 和图像字段
 
 验收标准：
 
-- `python record_episode.py --task pick_cube --action-source follower --duration 30` 可成功生成 episode
-- `frames.jsonl` 中每帧都有 `timestamp`、`observation`、`action`
-- 左右 6 个关节和夹爪字段完整
+- `python record_episode.py --dataset-format lerobot --task pick_cube --action-source follower --duration 30` 可成功生成 dataset
+- `data/lerobot/local/piper_pick_cube/` 下有 `data/`、`meta/`、`videos/`
+- `observation.state` 和 `action` 都是 14 维
 - 录制过程可用 `Ctrl+C` 安全停止
 
 待办：
@@ -114,21 +113,24 @@
 
 目标：
 
-- 加入至少 1 路顶视相机
+- 加入 3 路摄像头
 - 让机器人状态和视觉观测同时进入同一采集流程
 
 验收标准：
 
-- 相机可稳定出图
-- 机械臂状态和图像能同时采样
+- `python test_cameras.py --indices 0,1,2,3,4,5` 能找到 3 路可用画面
+- `record_episode.py --camera-indices ...` 能同时保存 3 路图片
+- LeRobot dataset 中存在 `observation.images.cam_top`、`observation.images.cam_left`、`observation.images.cam_right`
+- 机械臂状态、action 和图像能同时采样
 - 数据字段命名稳定，不再频繁变动
 
 待办：
 
-1. 接入顶视相机。
-2. 评估是否需要侧视相机。
-3. 统一图像和机器人状态采样时间戳。
-4. 固化观测字段命名。
+1. 确认 3 个摄像头编号和视角命名。
+2. 录一条 30 秒三摄 smoke test。
+3. 用 `LeRobotDataset` 加载检查帧数、episode 数和图像字段。
+4. 评估视频编码是否影响目标 fps。
+5. 固化三摄视角命名。
 
 ### Milestone 5: 第一轮 LeRobot 采集
 
@@ -166,22 +168,22 @@
 原因：
 
 - 主从示教已经可用，可以先录“抓方块”验证数据链路
-- 当前 recorder 还不是 `LeRobot` 标准 dataset
-- 图像观测还没有进入采集闭环
+- 当前还没做数据集加载和可视化检查
+- 图像观测需要实机确认帧率和编码稳定性
 - 叠毛巾任务本身较复杂，直接采容易把问题混在一起
 
 建议的最近两步：
 
 1. 用 `record_episode.py` 录 5 到 10 条抓方块短 episode。
-2. 接入相机落盘，并把 JSONL episode 转成 `LeRobot` 标准数据集。
+2. 用三摄像头直接录制一条 LeRobot smoke test，并加载检查。
 
 ## 推荐执行顺序
 
 1. 先完成 Milestone 1，别急着进训练。
 2. 先把 CAN 启动和状态读取流程脚本化。
-3. 用主从示教录最小 JSONL episode。
+3. 用主从示教录最小 LeRobot episode。
 4. 完成 Milestone 4，把相机接入采集闭环。
-5. 转成 `LeRobot` 标准数据集。
+5. 做 dataset 加载、可视化和训练配置。
 6. 再做正式训练和回放。
 
 ## 风险点
