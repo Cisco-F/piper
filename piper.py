@@ -31,6 +31,7 @@ class PiperRobot(Robot):
         self.config = config
         self.cameras = make_cameras_from_configs(config.cameras)
         self._connected = False
+        self._leaders: dict[str, object | None] = {"left": None, "right": None}
         self._followers: dict[str, object | None] = {"left": None, "right": None}
 
     @property
@@ -64,14 +65,19 @@ class PiperRobot(Robot):
     @property
     def is_connected(self) -> bool:
         cameras_connected = all(cam.is_connected for cam in self.cameras.values())
+        leaders_connected = all(
+            arm is None or self._sdk_arm_is_connected(arm) for arm in self._leaders.values()
+        )
         arms_connected = all(
             arm is None or self._sdk_arm_is_connected(arm) for arm in self._followers.values()
         )
-        return self._connected and cameras_connected and arms_connected
+        return self._connected and cameras_connected and leaders_connected and arms_connected
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         del calibrate  # Calibration behavior is not implemented yet.
+        self._leaders["left"] = self._make_follower(self.config.leader_left_port)
+        self._leaders["right"] = self._make_follower(self.config.leader_right_port)
         self._followers["left"] = self._make_follower(self.config.follower_left_port)
         self._followers["right"] = self._make_follower(self.config.follower_right_port)
 
@@ -128,15 +134,20 @@ class PiperRobot(Robot):
         gripper_state = arm.GetArmGripperMsgs().gripper_state
         return gripper_state.grippers_angle / 1_000_000.0
 
+    def _read_arm_state(self, arm: object | None, side: str) -> dict[str, float]:
+        state: dict[str, float] = {}
+        joints = self._read_joint_positions(arm)
+        for index, position in enumerate(joints, start=1):
+            state[f"{side}_joint_{index}.pos"] = position
+        state[f"{side}_gripper.pos"] = self._read_gripper_position(arm)
+        return state
+
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         observation: RobotObservation = {}
 
         for side in ("left", "right"):
-            joints = self._read_joint_positions(self._followers[side])
-            for index, position in enumerate(joints, start=1):
-                observation[f"{side}_joint_{index}.pos"] = position
-            observation[f"{side}_gripper.pos"] = self._read_gripper_position(self._followers[side])
+            observation.update(self._read_arm_state(self._followers[side], side))
 
         for camera_name, (height, width, channels) in self._cameras_ft.items():
             camera = self.cameras[camera_name]
@@ -146,6 +157,13 @@ class PiperRobot(Robot):
                 observation[camera_name] = np.zeros((height, width, channels), dtype=np.uint8)
 
         return observation
+
+    @check_if_not_connected
+    def get_leader_action(self) -> RobotAction:
+        action: RobotAction = {}
+        for side in ("left", "right"):
+            action.update(self._read_arm_state(self._leaders[side], side))
+        return action
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
