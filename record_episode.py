@@ -1,5 +1,7 @@
 import argparse
+import json
 import time
+from pathlib import Path
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
 
@@ -51,6 +53,46 @@ def make_camera_configs(args: argparse.Namespace) -> dict[str, OpenCVCameraConfi
     }
 
 
+def write_episode_outcome(
+    dataset_path: Path,
+    task: str,
+    outcome: str,
+    stop_reason: str,
+) -> None:
+    if outcome == "skip":
+        return
+
+    dataset_path.mkdir(parents=True, exist_ok=True)
+    outcome_path = dataset_path / "episode_outcomes.jsonl"
+    outcome_record = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "task": task,
+        "outcome": outcome,
+        "stop_reason": stop_reason,
+    }
+    with outcome_path.open("a", encoding="utf-8") as outcome_file:
+        outcome_file.write(json.dumps(outcome_record, ensure_ascii=False) + "\n")
+
+
+def prompt_episode_outcome() -> str:
+    options = {
+        "s": "success",
+        "success": "success",
+        "f": "failure",
+        "fail": "failure",
+        "failure": "failure",
+        "u": "unknown",
+        "unknown": "unknown",
+        "": "unknown",
+    }
+    while True:
+        value = input("Episode outcome [s=success, f=failure, u=unknown]: ").strip().lower()
+        outcome = options.get(value)
+        if outcome is not None:
+            return outcome
+        print("Please enter s, f, or u.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Record a minimal Piper teleop episode.")
     parser.add_argument("--task", default="pick_cube", help="Task name stored in metadata.")
@@ -64,6 +106,17 @@ def main() -> None:
     parser.add_argument("--root", default="data/lerobot", help="LeRobot dataset root directory.")
     parser.add_argument("--robot-type", default="piper", help="Robot type stored in LeRobot metadata.")
     parser.add_argument("--no-videos", action="store_true", help="Store image frames instead of videos.")
+    parser.add_argument(
+        "--prompt-outcome",
+        action="store_true",
+        help="Ask whether the manually stopped episode succeeded or failed.",
+    )
+    parser.add_argument(
+        "--episode-outcome",
+        choices=("success", "failure", "unknown", "skip"),
+        default="skip",
+        help="Outcome to write after recording. Use --prompt-outcome for manual labeling.",
+    )
     parser.add_argument("--output-dir", default="data/raw", help="Directory for JSONL debug episodes.")
     parser.add_argument("--fps", type=float, default=10.0, help="Recording frequency.")
     parser.add_argument("--duration", type=float, default=None, help="Optional duration in seconds.")
@@ -118,6 +171,8 @@ def main() -> None:
     period = 1.0 / args.fps
     started_at = time.monotonic()
     camera_shape = (args.camera_height, args.camera_width, 3)
+    stop_reason = "completed"
+    episode_path: Path | None = None
 
     try:
         robot.connect()
@@ -144,8 +199,9 @@ def main() -> None:
             )
 
         with recorder_context as recorder:
+            episode_path = Path(recorder.episode_dir)
             print(f"Recording to {recorder.episode_dir}")
-            print("Press Ctrl+C to stop.")
+            print("Press Ctrl+C once to stop and save the episode.")
             while True:
                 loop_started_at = time.monotonic()
                 observation = robot.get_observation()
@@ -161,15 +217,26 @@ def main() -> None:
                 recorder.record_frame(observation=observation, action=action)
 
                 if args.duration is not None and time.monotonic() - started_at >= args.duration:
+                    stop_reason = "duration"
                     break
 
                 elapsed = time.monotonic() - loop_started_at
                 time.sleep(max(0.0, period - elapsed))
     except KeyboardInterrupt:
+        stop_reason = "manual"
         print("\nStopping recording.")
     finally:
         if robot.is_connected:
             robot.disconnect()
+
+    if episode_path is not None:
+        outcome = prompt_episode_outcome() if args.prompt_outcome else args.episode_outcome
+        write_episode_outcome(
+            dataset_path=episode_path,
+            task=args.task,
+            outcome=outcome,
+            stop_reason=stop_reason,
+        )
 
 
 if __name__ == "__main__":

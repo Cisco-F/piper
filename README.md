@@ -13,7 +13,7 @@
 - 周期性读取左右臂 6 个关节角
 - 读取左右夹爪状态
 - 在终端打印观测结果
-- 录制最小 JSONL episode，用于验证主从示教数据链路
+- 直接录制 LeRobot dataset，并保留 JSONL 调试格式
 
 ## 当前硬件映射
 
@@ -34,6 +34,8 @@ python test_read_state.py --left-can can2 --right-can can0
   拉起左臂 `can2` 和右臂 `can0`
 - [scripts/run_read_state.sh](/home/murphy/code/piper-towel-fold/scripts/run_read_state.sh:1)
   按当前映射运行关节状态读取
+- [scripts/run_record_pick_cube.sh](/home/murphy/code/piper-towel-fold/scripts/run_record_pick_cube.sh:1)
+  按当前三摄映射启动抓方块 LeRobot 录制
 
 ## 代码结构
 
@@ -212,7 +214,22 @@ python test_cameras.py --indices 0,1,2,3,4,5
 data/camera_probe/
 ```
 
-看快照确认 3 个可用编号后，用这些编号开始录制。示例中假设 3 个摄像头是 `0,2,4`：
+摄像头编号不是按视角命名的，也不一定连续。它们是 Linux/OpenCV 看到的设备编号，和 USB 插口、系统枚举顺序有关，所以可能是 `0,1,2`，也可能是 `0,2,4` 或 `1,3,5`。必须以 `test_cameras.py` 快照和实际录制视频为准。
+
+当前实测视频内容是：
+
+- `0`: 右侧摄像头
+- `2`: 顶视摄像头
+- `4`: 左侧摄像头
+
+因此当前推荐映射是：
+
+```bash
+--camera-indices 2,4,0 \
+--camera-names cam_top,cam_left,cam_right
+```
+
+也就是 `2 -> cam_top`，`4 -> cam_left`，`0 -> cam_right`。完整录制命令：
 
 ```bash
 python record_episode.py \
@@ -225,12 +242,21 @@ python record_episode.py \
   --leader-left-can <leader_left_can> \
   --leader-right-can <leader_right_can> \
   --action-source leader \
-  --camera-indices 0,2,4 \
+  --camera-indices 2,4,0 \
   --camera-names cam_top,cam_left,cam_right \
   --camera-width 640 \
   --camera-height 480 \
   --camera-fps 30 \
-  --fps 10
+  --fps 10 \
+  --prompt-outcome
+```
+
+也可以用启动脚本。主臂 CAN 口用环境变量传入：
+
+```bash
+LEADER_LEFT_CAN=<leader_left_can> \
+LEADER_RIGHT_CAN=<leader_right_can> \
+./scripts/run_record_pick_cube.sh
 ```
 
 录制结果会写到：
@@ -257,6 +283,26 @@ data/lerobot/local/piper_pick_cube/
 ```
 
 建议第一天只录 5 到 10 条短 episode，每条 20 到 40 秒。每条录完后先用 `LeRobotDataset` 加载检查 episode 数、帧数、图像和低维字段是否正常。
+
+### 手动结束一条 episode
+
+如果不传 `--duration`，录制会一直进行。任务成功、失败或你想丢弃这次尝试时，按一次 `Ctrl+C` 停止；脚本会正常 `save_episode()`，不会直接丢掉这一条。
+
+如果加了 `--prompt-outcome`，停止后会让你输入：
+
+```text
+s = success
+f = failure
+u = unknown
+```
+
+结果会追加到：
+
+```text
+data/lerobot/local/piper_pick_cube/episode_outcomes.jsonl
+```
+
+这份文件用于后续筛选成功/失败 episode。现在它是旁路标注文件，不会改变 LeRobot 原始 dataset schema。
 
 ## 常见问题排查
 

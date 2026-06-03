@@ -17,6 +17,7 @@
 - 已确定第一个练手任务为“抓方块”
 - 已新增 LeRobot episode recorder，并保留 JSONL 调试 recorder
 - 已新增摄像头探测脚本和图片落盘格式
+- 已实测三摄映射：`2 -> cam_top`，`4 -> cam_left`，`0 -> cam_right`
 
 未完成：
 
@@ -101,6 +102,7 @@
 - `data/lerobot/local/piper_pick_cube/` 下有 `data/`、`meta/`、`videos/`
 - `observation.state` 和 `action` 都是 14 维
 - 录制过程可用 `Ctrl+C` 安全停止
+- 手动停止后可用 `--prompt-outcome` 标记成功、失败或未知
 
 待办：
 
@@ -119,7 +121,7 @@
 验收标准：
 
 - `python test_cameras.py --indices 0,1,2,3,4,5` 能找到 3 路可用画面
-- `record_episode.py --camera-indices ...` 能同时保存 3 路图片
+- `record_episode.py --camera-indices 2,4,0 --camera-names cam_top,cam_left,cam_right` 能同时保存 3 路视频
 - LeRobot dataset 中存在 `observation.images.cam_top`、`observation.images.cam_left`、`observation.images.cam_right`
 - 机械臂状态、action 和图像能同时采样
 - 数据字段命名稳定，不再频繁变动
