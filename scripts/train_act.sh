@@ -10,10 +10,12 @@ POLICY_REPO_ID="${POLICY_REPO_ID:-local/${JOB_NAME}}"
 
 DEVICE="${DEVICE:-cuda}"
 STEPS="${STEPS:-5000}"
-BATCH_SIZE="${BATCH_SIZE:-16}"
+BATCH_SIZE="${BATCH_SIZE:-4}"
 LOG_FREQ="${LOG_FREQ:-100}"
 SAVE_FREQ="${SAVE_FREQ:-1000}"
 WANDB_ENABLE="${WANDB_ENABLE:-false}"
+VIDEO_BACKEND="${VIDEO_BACKEND:-pyav}"
+PYTORCH_ALLOC_CONF_DEFAULT="${PYTORCH_ALLOC_CONF_DEFAULT:-expandable_segments:True}"
 
 DATASET_ROOT="${DATASET_ROOT:-${ROOT}/${REPO_ID}}"
 
@@ -22,6 +24,36 @@ if [[ ! -f "${DATASET_ROOT}/meta/info.json" ]]; then
   echo "Set ROOT and REPO_ID, or set DATASET_ROOT to the directory that contains meta/info.json." >&2
   exit 1
 fi
+
+python - "${DATASET_ROOT}/meta/info.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+info_path = Path(sys.argv[1])
+info = json.loads(info_path.read_text(encoding="utf-8"))
+features = info.get("features", {})
+
+updated = False
+for feature_name, feature in features.items():
+    if not isinstance(feature, dict):
+        continue
+    if not feature_name.startswith("observation.images."):
+        continue
+    if feature.get("dtype") not in {"image", "video"}:
+        continue
+    if "names" in feature:
+        continue
+
+    shape = feature.get("shape")
+    if isinstance(shape, list) and len(shape) == 3:
+        feature["names"] = ["height", "width", "channels"]
+        updated = True
+
+if updated:
+    info_path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    print(f"Patched dataset metadata: {info_path}")
+PY
 
 if ! find "${DATASET_ROOT}/data" -name "*.parquet" -print -quit >/dev/null 2>&1; then
   echo "No parquet files found under ${DATASET_ROOT}/data." >&2
@@ -41,11 +73,17 @@ echo "  dataset root: ${DATASET_ROOT}"
 echo "  output: ${OUTPUT_DIR}"
 echo "  device: ${DEVICE}"
 echo "  steps: ${STEPS}"
+echo "  batch size: ${BATCH_SIZE}"
+echo "  video backend: ${VIDEO_BACKEND}"
 echo
 echo "If POLICY_TYPE=${POLICY_TYPE} uses a pretrained checkpoint, LeRobot may download it the first time."
 echo "For ACT from scratch, the dataset videos/parquet are enough and no robot model is pulled."
 echo "Training is finished when the command reaches STEPS=${STEPS} and writes checkpoints under ${OUTPUT_DIR}."
 echo
+
+if [[ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ]]; then
+  export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_ALLOC_CONF_DEFAULT}"
+fi
 
 lerobot-train \
   --dataset.repo_id="${REPO_ID}" \
@@ -54,6 +92,7 @@ lerobot-train \
   --output_dir="${OUTPUT_DIR}" \
   --job_name="${JOB_NAME}" \
   --policy.device="${DEVICE}" \
+  --dataset.video_backend="${VIDEO_BACKEND}" \
   --steps="${STEPS}" \
   --batch_size="${BATCH_SIZE}" \
   --log_freq="${LOG_FREQ}" \

@@ -27,6 +27,8 @@ ARM_STATE_KEYS = [
     "right_gripper.pos",
 ]
 
+IMAGE_DIMENSION_NAMES = ["height", "width", "channels"]
+
 
 @dataclass(frozen=True)
 class EpisodeMetadata:
@@ -292,6 +294,7 @@ class LeRobotEpisodeRecorder:
             features[f"observation.images.{camera_name}"] = {
                 "dtype": "video" if self.use_videos else "image",
                 "shape": self.camera_shape,
+                "names": IMAGE_DIMENSION_NAMES,
             }
         return features
 
