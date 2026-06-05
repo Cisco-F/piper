@@ -38,6 +38,23 @@ def call_optional(arm: Any, method_name: str, *args: Any) -> bool:
     return True
 
 
+def call_motion_reset(arm: Any) -> None:
+    motion_ctrl_1 = getattr(arm, "MotionCtrl_1", None)
+    if callable(motion_ctrl_1):
+        motion_ctrl_1(0x02, 0, 0)
+        return
+
+    reset_piper = getattr(arm, "ResetPiper", None)
+    if callable(reset_piper):
+        reset_piper()
+        return
+
+    raise RuntimeError(
+        "This piper_sdk version exposes neither MotionCtrl_1() nor ResetPiper(). "
+        "Please update piper_sdk or run the official demo piper_ctrl_reset.py."
+    )
+
+
 def reset_arm(interface_cls: type, can_name: str, args: argparse.Namespace) -> None:
     print(f"[{can_name}] connecting")
     try:
@@ -47,20 +64,10 @@ def reset_arm(interface_cls: type, can_name: str, args: argparse.Namespace) -> N
     call_connect_port(arm, piper_init=args.piper_init)
     time.sleep(args.connect_wait)
 
-    if args.disable_first:
-        print(f"[{can_name}] disabling arm before reset")
-        if not call_optional(arm, "DisableArm", 7):
-            print(f"[{can_name}] DisableArm is not available in this piper_sdk version")
+    for attempt in range(1, args.repeat + 1):
+        print(f"[{can_name}] sending MotionCtrl_1(0x02, 0, 0) reset ({attempt}/{args.repeat})")
+        call_motion_reset(arm)
         time.sleep(args.command_wait)
-
-    print(f"[{can_name}] sending ResetPiper")
-    if not call_optional(arm, "ResetPiper"):
-        raise RuntimeError(
-            "This piper_sdk version does not expose ResetPiper(). "
-            "Please update piper_sdk or run the official demo piper_reset.py."
-        )
-
-    time.sleep(args.command_wait)
 
     if args.resume_emergency_stop:
         print(f"[{can_name}] sending EmergencyStop resume")
@@ -76,7 +83,7 @@ def reset_arm(interface_cls: type, can_name: str, args: argparse.Namespace) -> N
     if callable(disconnect):
         disconnect()
 
-    print(f"[{can_name}] reset command sent")
+    print(f"[{can_name}] reset command attempted; check piper_sdk logs above for send failures")
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,10 +101,10 @@ def parse_args() -> argparse.Namespace:
         help="Skip the safety confirmation prompt.",
     )
     parser.add_argument(
-        "--no-disable-first",
-        dest="disable_first",
-        action="store_false",
-        help="Do not call DisableArm before ResetPiper.",
+        "--repeat",
+        type=int,
+        default=1,
+        help="How many times to send MotionCtrl_1(0x02, 0, 0).",
     )
     parser.add_argument(
         "--piper-init",
@@ -116,7 +123,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--connect-wait", type=float, default=0.5)
     parser.add_argument("--command-wait", type=float, default=1.0)
-    parser.set_defaults(disable_first=True)
     return parser.parse_args()
 
 
@@ -125,8 +131,10 @@ def main() -> None:
     can_names = parse_csv(args.can)
     if not can_names:
         raise ValueError("--can must contain at least one CAN interface.")
+    if args.repeat <= 0:
+        raise ValueError("--repeat must be greater than 0.")
 
-    print("WARNING: ResetPiper will make the arm lose power immediately.")
+    print("WARNING: Piper reset will make the arm lose power immediately.")
     print("Make sure the arm is supported, clear of people/objects, and you are ready to re-enable it afterward.")
     print(f"CAN interfaces: {', '.join(can_names)}")
     if not args.yes:
@@ -139,7 +147,8 @@ def main() -> None:
     for can_name in can_names:
         reset_arm(interface_cls, can_name, args)
 
-    print("Done. After reset, try reading state first, then run SDK control/enable again.")
+    print("Done. If piper_sdk logged SEND_MESSAGE_FAILED, the reset command did not reach the arm.")
+    print("After a clean reset, try reading state first, then run SDK control/enable again.")
 
 
 if __name__ == "__main__":

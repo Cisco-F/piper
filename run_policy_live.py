@@ -1,6 +1,8 @@
 import argparse
+import json
 import signal
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -95,6 +97,22 @@ def current_action_from_observation(observation: dict[str, Any]) -> dict[str, fl
     return {key: float(observation.get(key, 0.0)) for key in ARM_STATE_KEYS}
 
 
+def max_abs_delta(left: dict[str, float], right: dict[str, float]) -> float:
+    return max(abs(left[key] - right[key]) for key in left.keys() & right.keys())
+
+
+def right_arm_delta(left: dict[str, float], right: dict[str, float]) -> float:
+    keys = {
+        *(f"right_joint_{index}.pos" for index in range(1, 7)),
+        "right_gripper.pos",
+    }
+    return max(abs(left[key] - right[key]) for key in keys & left.keys() & right.keys())
+
+
+def json_ready(action: dict[str, float]) -> dict[str, float]:
+    return {key: float(value) for key, value in action.items()}
+
+
 def get_action_names(policy_config: Any) -> list[str]:
     output_features = getattr(policy_config, "output_features", None)
     if isinstance(output_features, dict):
@@ -166,7 +184,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-gripper-step-m", type=float, default=0.001)
     parser.add_argument("--gripper-effort", type=int, default=1000)
     parser.add_argument("--smoothing-alpha", type=float, default=0.25)
+    parser.add_argument(
+        "--pace-by-reach",
+        action="store_true",
+        help="Hold the current policy target until the right arm gets close, instead of advancing every tick.",
+    )
+    parser.add_argument(
+        "--advance-threshold-rad",
+        type=float,
+        default=0.08,
+        help="Right-arm max error threshold for advancing to the next policy action.",
+    )
+    parser.add_argument(
+        "--max-hold-steps",
+        type=int,
+        default=30,
+        help="Maximum control ticks to hold one policy action when --pace-by-reach is enabled.",
+    )
     parser.add_argument("--print-every", type=int, default=1, help="Print every N policy steps.")
+    parser.add_argument("--log-jsonl", default="", help="Optional JSONL path for live rollout diagnostics.")
     return parser.parse_args()
 
 
@@ -203,8 +239,15 @@ def main() -> None:
     period = 1.0 / args.fps
     started_at = time.monotonic()
     previous_action: dict[str, float] | None = None
+    held_predicted_action: dict[str, float] | None = None
+    hold_steps = 0
     camera_names = list(camera_configs.keys())
     action_feature_names = get_action_names(policy_config)
+    log_file = None
+    if args.log_jsonl:
+        log_path = Path(args.log_jsonl)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = log_path.open("w", encoding="utf-8")
 
     reset = getattr(policy, "reset", None)
     if callable(reset):
@@ -229,17 +272,32 @@ def main() -> None:
                 break
 
             observation = robot.get_observation()
+            current_action = current_action_from_observation(observation)
             if previous_action is None:
-                previous_action = current_action_from_observation(observation)
+                previous_action = current_action
 
             policy_input = observation_to_policy_input(observation, camera_names, args.task)
-            processed = preprocessor(policy_input)
+            should_advance = True
+            if args.pace_by_reach and held_predicted_action is not None:
+                target_error = right_arm_delta(held_predicted_action, current_action)
+                should_advance = (
+                    target_error <= args.advance_threshold_rad
+                    or hold_steps >= args.max_hold_steps
+                )
 
-            with torch.inference_mode():
-                action_tensor = policy.select_action(processed)
-                action_tensor = postprocessor(action_tensor)
-
-            predicted_action = action_tensor_to_dict(action_tensor, action_feature_names)
+            if should_advance:
+                processed = preprocessor(policy_input)
+                with torch.inference_mode():
+                    action_tensor = policy.select_action(processed)
+                    action_tensor = postprocessor(action_tensor)
+                predicted_action = action_tensor_to_dict(action_tensor, action_feature_names)
+                held_predicted_action = predicted_action
+                hold_steps = 0
+            elif held_predicted_action is not None:
+                predicted_action = held_predicted_action
+                hold_steps += 1
+            else:
+                raise RuntimeError("No held action is available.")
             smoothed_action = smooth_action(predicted_action, previous_action, args.smoothing_alpha)
 
             if args.execute:
@@ -252,11 +310,36 @@ def main() -> None:
             if step % args.print_every == 0:
                 print_action_summary(f"step {step:04d} pred:", predicted_action)
                 print_action_summary(f"step {step:04d} send:", sent_action)
+                print(
+                    f"step {step:04d} delta:"
+                    f" pred-current={max_abs_delta(predicted_action, current_action):.4f}"
+                    f" send-current={max_abs_delta(sent_action, current_action):.4f}"
+                    f" right-target={right_arm_delta(predicted_action, current_action):.4f}"
+                    f" hold={hold_steps}"
+                )
+
+            if log_file is not None:
+                log_record = {
+                    "timestamp": time.time(),
+                    "step": step,
+                    "loop_s": time.monotonic() - loop_started_at,
+                    "current_action": json_ready(current_action),
+                    "predicted_action": json_ready(predicted_action),
+                    "sent_action": json_ready(sent_action),
+                    "pred_current_max_abs_delta": max_abs_delta(predicted_action, current_action),
+                    "sent_current_max_abs_delta": max_abs_delta(sent_action, current_action),
+                    "right_target_delta": right_arm_delta(predicted_action, current_action),
+                    "hold_steps": hold_steps,
+                }
+                log_file.write(json.dumps(log_record, ensure_ascii=False) + "\n")
+                log_file.flush()
 
             step += 1
             elapsed = time.monotonic() - loop_started_at
             time.sleep(max(0.0, period - elapsed))
     finally:
+        if log_file is not None:
+            log_file.close()
         if robot.is_connected:
             robot.disconnect()
 

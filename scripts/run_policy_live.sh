@@ -26,7 +26,11 @@ CONTROL_SPEED="${CONTROL_SPEED:-10}"
 MAX_JOINT_STEP_RAD="${MAX_JOINT_STEP_RAD:-0.025}"
 MAX_GRIPPER_STEP_M="${MAX_GRIPPER_STEP_M:-0.001}"
 SMOOTHING_ALPHA="${SMOOTHING_ALPHA:-0.25}"
+PACE_BY_REACH="${PACE_BY_REACH:-false}"
+ADVANCE_THRESHOLD_RAD="${ADVANCE_THRESHOLD_RAD:-0.08}"
+MAX_HOLD_STEPS="${MAX_HOLD_STEPS:-30}"
 PRINT_EVERY="${PRINT_EVERY:-1}"
+LOG_JSONL="${LOG_JSONL:-}"
 
 args=(
   run_policy_live.py
@@ -49,8 +53,18 @@ args=(
   --max-joint-step-rad "$MAX_JOINT_STEP_RAD"
   --max-gripper-step-m "$MAX_GRIPPER_STEP_M"
   --smoothing-alpha "$SMOOTHING_ALPHA"
+  --advance-threshold-rad "$ADVANCE_THRESHOLD_RAD"
+  --max-hold-steps "$MAX_HOLD_STEPS"
   --print-every "$PRINT_EVERY"
 )
+
+if [[ "$PACE_BY_REACH" == "true" ]]; then
+  args+=(--pace-by-reach)
+fi
+
+if [[ -n "$LOG_JSONL" ]]; then
+  args+=(--log-jsonl "$LOG_JSONL")
+fi
 
 if [[ "$EXECUTE" == "true" ]]; then
   args+=(--execute)
