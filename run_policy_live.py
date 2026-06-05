@@ -1,0 +1,265 @@
+import argparse
+import signal
+import time
+from typing import Any
+
+import numpy as np
+import torch
+from lerobot.cameras.opencv import OpenCVCameraConfig
+
+from __init__ import PiperRobotConfig
+from offline_infer import action_tensor_to_dict, load_dataset, load_policy
+from piper import PiperRobot
+from recorder import ARM_STATE_KEYS
+
+
+def parse_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_camera_ref(value: str) -> int | str:
+    return int(value) if value.isdigit() else value
+
+
+def make_camera_configs(args: argparse.Namespace) -> dict[str, OpenCVCameraConfig]:
+    camera_refs = parse_csv(args.camera_indices)
+    camera_names = parse_csv(args.camera_names)
+    if len(camera_refs) != len(camera_names):
+        raise ValueError("--camera-indices and --camera-names must have the same number of items.")
+
+    return {
+        camera_name: OpenCVCameraConfig(
+            index_or_path=parse_camera_ref(camera_ref),
+            fps=args.camera_fps,
+            width=args.camera_width,
+            height=args.camera_height,
+        )
+        for camera_name, camera_ref in zip(camera_names, camera_refs, strict=True)
+    }
+
+
+def install_stop_handler() -> dict[str, bool]:
+    stop_requested = {"value": False}
+
+    def request_stop(signum: int, frame: object) -> None:
+        del signum, frame
+        stop_requested["value"] = True
+        print("\nStop requested. Finishing current loop.")
+
+    signal.signal(signal.SIGINT, request_stop)
+    return stop_requested
+
+
+def image_to_tensor(image: np.ndarray) -> torch.Tensor:
+    if image.ndim != 3:
+        raise ValueError(f"Expected HWC image, got shape {image.shape}.")
+    tensor = torch.from_numpy(np.ascontiguousarray(image)).permute(2, 0, 1)
+    return tensor.float() / 255.0
+
+
+def observation_to_policy_input(
+    observation: dict[str, Any],
+    camera_names: list[str],
+    task: str,
+) -> dict[str, Any]:
+    policy_input: dict[str, Any] = {
+        "observation.state": torch.tensor(
+            [float(observation.get(key, 0.0)) for key in ARM_STATE_KEYS],
+            dtype=torch.float32,
+        ),
+        "task": task,
+    }
+
+    for camera_name in camera_names:
+        image = observation[camera_name]
+        policy_input[f"observation.images.{camera_name}"] = image_to_tensor(image)
+
+    return policy_input
+
+
+def smooth_action(
+    action: dict[str, float],
+    previous_action: dict[str, float] | None,
+    alpha: float,
+) -> dict[str, float]:
+    if previous_action is None:
+        return dict(action)
+
+    return {
+        key: previous_action.get(key, value) * (1.0 - alpha) + value * alpha
+        for key, value in action.items()
+    }
+
+
+def current_action_from_observation(observation: dict[str, Any]) -> dict[str, float]:
+    return {key: float(observation.get(key, 0.0)) for key in ARM_STATE_KEYS}
+
+
+def get_action_names(policy_config: Any) -> list[str]:
+    output_features = getattr(policy_config, "output_features", None)
+    if isinstance(output_features, dict):
+        action_feature = output_features.get("action")
+        if isinstance(action_feature, dict):
+            names = action_feature.get("names")
+        else:
+            names = getattr(action_feature, "names", None)
+        if names is not None:
+            return list(names)
+
+    return list(ARM_STATE_KEYS)
+
+
+def load_dataset_stats(args: argparse.Namespace) -> Any | None:
+    if not args.dataset_root:
+        return None
+
+    try:
+        dataset = load_dataset(
+            repo_id=args.repo_id,
+            dataset_root=args.dataset_root,
+            video_backend=args.video_backend,
+        )
+    except Exception as exc:
+        print(f"Warning: could not load dataset stats from {args.dataset_root}: {exc}")
+        return None
+
+    return getattr(dataset.meta, "stats", None)
+
+
+def print_action_summary(prefix: str, action: dict[str, float]) -> None:
+    right = ", ".join(
+        f"rj{index}={action[f'right_joint_{index}.pos']:.3f}" for index in range(1, 7)
+    )
+    left = ", ".join(
+        f"lj{index}={action[f'left_joint_{index}.pos']:.3f}" for index in range(1, 7)
+    )
+    print(
+        f"{prefix} {left}, lg={action['left_gripper.pos']:.4f} | "
+        f"{right}, rg={action['right_gripper.pos']:.4f}"
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run a trained LeRobot policy on the real Piper robot.")
+    parser.add_argument(
+        "--policy-path",
+        default="outputs/train/act_piper_pick_cube/checkpoints/last/pretrained_model",
+        help="Path to the local pretrained_model checkpoint directory.",
+    )
+    parser.add_argument("--repo-id", default="local/piper_pick_cube")
+    parser.add_argument("--dataset-root", default="data/lerobot/local/piper_pick_cube")
+    parser.add_argument("--video-backend", default="pyav", choices=("pyav", "torchcodec"))
+    parser.add_argument("--task", default="pick_cube", help="Task string passed to the policy.")
+    parser.add_argument("--execute", action="store_true", help="Actually send actions to the robot.")
+    parser.add_argument("--duration", type=float, default=10.0, help="Run duration in seconds.")
+    parser.add_argument("--fps", type=float, default=10.0, help="Policy control frequency.")
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--follower-left-can", default="can2")
+    parser.add_argument("--follower-right-can", default="can0")
+    parser.add_argument("--camera-indices", default="2,4,0")
+    parser.add_argument("--camera-names", default="cam_top,cam_left,cam_right")
+    parser.add_argument("--camera-width", type=int, default=640)
+    parser.add_argument("--camera-height", type=int, default=480)
+    parser.add_argument("--camera-fps", type=int, default=30)
+    parser.add_argument("--control-speed", type=int, default=10)
+    parser.add_argument("--max-joint-step-rad", type=float, default=0.025)
+    parser.add_argument("--max-gripper-step-m", type=float, default=0.001)
+    parser.add_argument("--gripper-effort", type=int, default=1000)
+    parser.add_argument("--smoothing-alpha", type=float, default=0.25)
+    parser.add_argument("--print-every", type=int, default=1, help="Print every N policy steps.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.fps <= 0:
+        raise ValueError("--fps must be greater than 0.")
+    if not 0.0 < args.smoothing_alpha <= 1.0:
+        raise ValueError("--smoothing-alpha must be in (0, 1].")
+
+    camera_configs = make_camera_configs(args)
+    config = PiperRobotConfig(
+        follower_left_port=args.follower_left_can,
+        follower_right_port=args.follower_right_can,
+        cameras=camera_configs,
+        enable_control=args.execute,
+        control_speed=args.control_speed,
+        max_joint_step_rad=args.max_joint_step_rad,
+        max_gripper_step_m=args.max_gripper_step_m,
+        gripper_effort=args.gripper_effort,
+    )
+
+    policy_config, policy, make_pre_post_processors = load_policy(args.policy_path, args.device)
+    dataset_stats = load_dataset_stats(args)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=policy_config,
+        pretrained_path=args.policy_path,
+        dataset_stats=dataset_stats,
+        preprocessor_overrides={"device_processor": {"device": args.device}},
+    )
+
+    robot = PiperRobot(config)
+    stop_requested = install_stop_handler()
+    period = 1.0 / args.fps
+    started_at = time.monotonic()
+    previous_action: dict[str, float] | None = None
+    camera_names = list(camera_configs.keys())
+    action_feature_names = get_action_names(policy_config)
+
+    reset = getattr(policy, "reset", None)
+    if callable(reset):
+        reset()
+
+    print("Running live policy.")
+    print(f"  mode: {'EXECUTE' if args.execute else 'DRY RUN'}")
+    print(f"  policy: {args.policy_path}")
+    print(f"  fps: {args.fps}")
+    print(f"  cameras: {', '.join(camera_names)}")
+    if not args.execute:
+        print("  no actions will be sent; add --execute only after dry-run output looks sane")
+    print("Press Ctrl+C to stop.")
+    print()
+
+    try:
+        robot.connect()
+        step = 0
+        while not stop_requested["value"]:
+            loop_started_at = time.monotonic()
+            if time.monotonic() - started_at >= args.duration:
+                break
+
+            observation = robot.get_observation()
+            if previous_action is None:
+                previous_action = current_action_from_observation(observation)
+
+            policy_input = observation_to_policy_input(observation, camera_names, args.task)
+            processed = preprocessor(policy_input)
+
+            with torch.inference_mode():
+                action_tensor = policy.select_action(processed)
+                action_tensor = postprocessor(action_tensor)
+
+            predicted_action = action_tensor_to_dict(action_tensor, action_feature_names)
+            smoothed_action = smooth_action(predicted_action, previous_action, args.smoothing_alpha)
+
+            if args.execute:
+                sent_action = robot.send_action(smoothed_action)
+                previous_action = dict(sent_action)
+            else:
+                sent_action = smoothed_action
+                previous_action = smoothed_action
+
+            if step % args.print_every == 0:
+                print_action_summary(f"step {step:04d} pred:", predicted_action)
+                print_action_summary(f"step {step:04d} send:", sent_action)
+
+            step += 1
+            elapsed = time.monotonic() - loop_started_at
+            time.sleep(max(0.0, period - elapsed))
+    finally:
+        if robot.is_connected:
+            robot.disconnect()
+
+
+if __name__ == "__main__":
+    main()

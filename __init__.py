@@ -12,6 +12,11 @@ class PiperRobotConfig(RobotConfig):
     leader_right_port: str | None = None
     follower_left_port: str | None = None
     follower_right_port: str | None = None
+    enable_control: bool = False
+    control_speed: int = 15
+    max_joint_step_rad: float = 0.04
+    max_gripper_step_m: float = 0.002
+    gripper_effort: int = 1000
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "cam_top": OpenCVCameraConfig(

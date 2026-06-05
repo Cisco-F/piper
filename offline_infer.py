@@ -68,8 +68,15 @@ def import_lerobot_dataset() -> type:
 
 
 def load_policy(policy_path: str, device: str):
-    from lerobot.configs import PreTrainedConfig
-    from lerobot.policies import get_policy_class, make_pre_post_processors
+    try:
+        from lerobot.configs import PreTrainedConfig
+    except ImportError:
+        from lerobot.configs.policies import PreTrainedConfig
+
+    try:
+        from lerobot.policies import get_policy_class, make_pre_post_processors
+    except ImportError:
+        from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
     config = PreTrainedConfig.from_pretrained(policy_path)
     config.pretrained_path = policy_path
@@ -80,13 +87,7 @@ def load_policy(policy_path: str, device: str):
     policy.eval()
     policy.to(device)
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=config,
-        pretrained_path=policy_path,
-        dataset_stats=None,
-        preprocessor_overrides={"device_processor": {"device": device}},
-    )
-    return config, policy, preprocessor, postprocessor
+    return config, policy, make_pre_post_processors
 
 
 def load_dataset(repo_id: str, dataset_root: str, video_backend: str):
@@ -94,10 +95,40 @@ def load_dataset(repo_id: str, dataset_root: str, video_backend: str):
     return dataset_cls(repo_id=repo_id, root=dataset_root, video_backend=video_backend)
 
 
+def has_column(table: Any, column_name: str) -> bool:
+    if isinstance(table, dict):
+        return column_name in table
+
+    column_names = getattr(table, "column_names", None)
+    if column_names is not None:
+        return column_name in column_names
+
+    features = getattr(table, "features", None)
+    if features is not None:
+        return column_name in features
+
+    try:
+        table[column_name]
+    except (KeyError, TypeError):
+        return False
+    return True
+
+
+def get_column(table: Any, column_name: str) -> Any:
+    if not has_column(table, column_name):
+        return None
+    return table[column_name]
+
+
 def get_episode_bounds(dataset: Any, episode_index: int) -> tuple[int, int]:
     episodes = dataset.meta.episodes
-    from_indices = episodes["dataset_from_index"]
-    to_indices = episodes.get("dataset_to_index")
+    from_indices = get_column(episodes, "dataset_from_index")
+    to_indices = get_column(episodes, "dataset_to_index")
+
+    if from_indices is None:
+        raise KeyError("dataset.meta.episodes does not contain dataset_from_index.")
+    if episode_index < 0 or episode_index >= len(from_indices):
+        raise IndexError(f"Episode index {episode_index} is out of range. Dataset has {len(from_indices)} episodes.")
 
     start = int(from_indices[episode_index])
     if to_indices is not None:
@@ -174,7 +205,14 @@ def main() -> None:
         dataset_root=args.dataset_root,
         video_backend=args.video_backend,
     )
-    _, policy, preprocessor, postprocessor = load_policy(args.policy_path, args.device)
+    config, policy, make_pre_post_processors = load_policy(args.policy_path, args.device)
+
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=config,
+        pretrained_path=args.policy_path,
+        dataset_stats=getattr(dataset.meta, "stats", None),
+        preprocessor_overrides={"device_processor": {"device": args.device}},
+    )
 
     action_feature = dataset.meta.features["action"]
     action_names = list(action_feature["names"])
@@ -195,7 +233,9 @@ def main() -> None:
     print()
 
     outputs: list[dict[str, Any]] = []
-    policy.reset()
+    reset = getattr(policy, "reset", None)
+    if callable(reset):
+        reset()
 
     for frame_index in range(frame_start, frame_stop):
         sample = dict(dataset[frame_index])

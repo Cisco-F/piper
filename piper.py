@@ -104,7 +104,24 @@ class PiperRobot(Robot):
 
         arm = C_PiperInterface_V2(can_name=can_name)
         arm.ConnectPort()
+        if self.config.enable_control:
+            self._enable_arm_control(arm)
         return arm
+
+    def _enable_arm_control(self, arm: object) -> None:
+        enable_arm = getattr(arm, "EnableArm", None)
+        if callable(enable_arm):
+            try:
+                enable_arm(7)
+            except TypeError:
+                enable_arm()
+
+        mode_ctrl = getattr(arm, "MotionCtrl_2", None)
+        if callable(mode_ctrl):
+            try:
+                mode_ctrl(0x01, 0x01, int(self.config.control_speed), 0x00)
+            except TypeError:
+                mode_ctrl(0x01, 0x01, int(self.config.control_speed))
 
     def _sdk_arm_is_connected(self, arm: object) -> bool:
         get_status = getattr(arm, "get_connect_status", None)
@@ -142,6 +159,51 @@ class PiperRobot(Robot):
         state[f"{side}_gripper.pos"] = self._read_gripper_position(arm)
         return state
 
+    def _limited_value(self, target: float, current: float, max_step: float) -> float:
+        return float(np.clip(target, current - max_step, current + max_step))
+
+    def _arm_command_from_action(
+        self,
+        action: RobotAction,
+        current: dict[str, float],
+        side: str,
+    ) -> tuple[list[float], float]:
+        joints = []
+        for index in range(1, 7):
+            key = f"{side}_joint_{index}.pos"
+            target = float(action.get(key, current[key]))
+            joints.append(self._limited_value(target, current[key], self.config.max_joint_step_rad))
+
+        gripper_key = f"{side}_gripper.pos"
+        gripper_target = float(action.get(gripper_key, current[gripper_key]))
+        gripper = self._limited_value(
+            gripper_target,
+            current[gripper_key],
+            self.config.max_gripper_step_m,
+        )
+        return joints, gripper
+
+    def _send_arm_command(self, arm: object | None, joints_rad: list[float], gripper_m: float) -> None:
+        if arm is None:
+            return
+
+        joint_ctrl = getattr(arm, "JointCtrl", None)
+        if callable(joint_ctrl):
+            joints_mdeg = [int(round(math.degrees(value) * 1000.0)) for value in joints_rad]
+            joint_ctrl(*joints_mdeg)
+
+        gripper_ctrl = getattr(arm, "GripperCtrl", None)
+        if callable(gripper_ctrl):
+            gripper_um = int(round(gripper_m * 1_000_000.0))
+            gripper_ctrl(gripper_um, int(self.config.gripper_effort), 0x01, 0)
+
+    def _command_dict(self, side: str, joints_rad: list[float], gripper_m: float) -> dict[str, float]:
+        command: dict[str, float] = {}
+        for index, value in enumerate(joints_rad, start=1):
+            command[f"{side}_joint_{index}.pos"] = value
+        command[f"{side}_gripper.pos"] = gripper_m
+        return command
+
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         observation: RobotObservation = {}
@@ -167,11 +229,24 @@ class PiperRobot(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        del action
-        raise NotImplementedError("Piper control interface is not implemented yet.")
+        if not self.config.enable_control:
+            raise RuntimeError("PiperRobotConfig.enable_control must be True before sending actions.")
+
+        sanitized_action: RobotAction = {}
+        for side in ("left", "right"):
+            current = self._read_arm_state(self._followers[side], side)
+            joints, gripper = self._arm_command_from_action(action, current, side)
+            self._send_arm_command(self._followers[side], joints, gripper)
+            sanitized_action.update(self._command_dict(side, joints, gripper))
+
+        return sanitized_action
 
     @check_if_not_connected
     def disconnect(self) -> None:
         for cam in self.cameras.values():
             cam.disconnect()
+        for arm in (*self._leaders.values(), *self._followers.values()):
+            disconnect = getattr(arm, "DisconnectPort", None)
+            if callable(disconnect):
+                disconnect()
         self._connected = False

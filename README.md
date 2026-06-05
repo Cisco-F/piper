@@ -314,6 +314,56 @@ data/lerobot/local/piper_pick_cube/
 --dataset-format jsonl
 ```
 
+## 离线推理和真机测试
+
+训练完成后，checkpoint 默认在：
+
+```text
+outputs/train/act_piper_pick_cube/checkpoints/last/pretrained_model
+```
+
+先用已录好的数据做离线回放检查：
+
+```bash
+python offline_infer.py \
+  --policy-path outputs/train/act_piper_pick_cube/checkpoints/last/pretrained_model \
+  --repo-id local/piper_pick_cube \
+  --dataset-root data/lerobot/local/piper_pick_cube \
+  --episode-index 0 \
+  --frame-offset 800 \
+  --num-frames 50
+```
+
+真机测试分两步。第一步先 dry-run，只读实时相机和关节状态、加载 policy、打印预测 action，不会下发控制：
+
+```bash
+./scripts/run_policy_live.sh
+```
+
+确认预测值没有明显跳变后，再短时间执行。第一次建议只跑 3 到 5 秒，并把手放在急停附近：
+
+```bash
+EXECUTE=true DURATION=3 ./scripts/run_policy_live.sh
+```
+
+实时执行默认做了两层保守处理：
+
+- `SMOOTHING_ALPHA=0.25`: 对 policy 输出做指数平滑
+- `MAX_JOINT_STEP_RAD=0.025`: 每个控制周期每个关节最多走约 1.4 度
+- `MAX_GRIPPER_STEP_M=0.001`: 每个控制周期夹爪最多变化 1 mm
+
+如果真机动作太慢，可以逐步放宽，例如：
+
+```bash
+EXECUTE=true \
+DURATION=5 \
+MAX_JOINT_STEP_RAD=0.04 \
+SMOOTHING_ALPHA=0.4 \
+./scripts/run_policy_live.sh
+```
+
+不要在第一次执行时把限速直接调很大。离线误差即使看起来不错，实时相机延迟、起始姿态偏差、物体位置变化都会让第一版策略产生更大的动作误差。
+
 建议第一天只录 5 到 10 条短 episode，每条 20 到 40 秒。每条录完后先用 `LeRobotDataset` 加载检查 episode 数、帧数、图像和低维字段是否正常。
 
 ### 手动结束一条 episode
