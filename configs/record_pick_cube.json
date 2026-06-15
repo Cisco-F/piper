@@ -1,7 +1,7 @@
 {
-  "task": "pick_cube",
+  "task": "cube_v2",
   "dataset_format": "lerobot",
-  "repo_id": "local/piper_pick_cube",
+  "repo_id": "local/cube_v2",
   "root": "data/lerobot",
   "robot_type": "piper",
   "no_videos": false,
@@ -10,7 +10,7 @@
   "output_dir": "data/raw",
   "fps": 10.0,
   "duration": null,
-  "follower_left_can": "can2",
+  "follower_left_can": null,
   "follower_right_can": "can0",
   "leader_left_can": null,
   "leader_right_can": null,
@@ -24,10 +24,6 @@
     {
       "name": "cam_top",
       "ref": 2
-    },
-    {
-      "name": "cam_left",
-      "ref": 4
     },
     {
       "name": "cam_right",

@@ -307,7 +307,11 @@ class LeRobotEpisodeRecorder:
             return
 
         expected_keys = set(expected_features.keys())
-        existing_keys = set(existing_features.keys())
+        existing_keys = {
+            key
+            for key in existing_features.keys()
+            if key in {"action", "observation.state"} or key.startswith("observation.images.")
+        }
         if expected_keys != existing_keys:
             raise ValueError(
                 "Existing dataset schema does not match the current recording schema. "
