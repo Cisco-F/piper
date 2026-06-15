@@ -1,0 +1,158 @@
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+DEFAULTS: dict[str, Any] = {
+    "policy_type": "act",
+    "device": "cuda",
+    "steps": 5000,
+    "batch_size": 4,
+    "log_freq": 100,
+    "save_freq": 1000,
+    "wandb_enable": False,
+    "video_backend": "pyav",
+    "pytorch_alloc_conf": "expandable_segments:True",
+}
+
+
+def load_config(config_path: Path) -> dict[str, Any]:
+    with config_path.open("r", encoding="utf-8") as config_file:
+        data = json.load(config_file)
+    if not isinstance(data, dict):
+        raise ValueError("Config file must contain a JSON object.")
+    return data
+
+
+def training_config(config: dict[str, Any]) -> dict[str, Any]:
+    training = config.get("training", {})
+    if training is None:
+        training = {}
+    if not isinstance(training, dict):
+        raise ValueError("'training' must be an object when present.")
+
+    result = dict(DEFAULTS)
+    result.update(training)
+    return result
+
+
+def dataset_root(config: dict[str, Any]) -> Path:
+    repo_id = config.get("repo_id")
+    root = config.get("root", "data/lerobot")
+    if not repo_id:
+        raise ValueError("Config must contain 'repo_id'.")
+    return Path(str(root)) / str(repo_id)
+
+
+def patch_image_feature_names(info_path: Path) -> None:
+    info = json.loads(info_path.read_text(encoding="utf-8"))
+    features = info.get("features", {})
+    if not isinstance(features, dict):
+        return
+
+    updated = False
+    for feature_name, feature in features.items():
+        if not isinstance(feature, dict):
+            continue
+        if not feature_name.startswith("observation.images."):
+            continue
+        if feature.get("dtype") not in {"image", "video"}:
+            continue
+        if "names" in feature:
+            continue
+
+        shape = feature.get("shape")
+        if isinstance(shape, list) and len(shape) == 3:
+            feature["names"] = ["height", "width", "channels"]
+            updated = True
+
+    if updated:
+        info_path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+        print(f"Patched dataset metadata: {info_path}")
+
+
+def validate_dataset(path: Path) -> None:
+    info_path = path / "meta" / "info.json"
+    if not info_path.exists():
+        raise FileNotFoundError(
+            f"Dataset metadata not found: {info_path}. Record data first or check repo_id/root."
+        )
+
+    patch_image_feature_names(info_path)
+    if not any((path / "data").rglob("*.parquet")):
+        raise FileNotFoundError(f"No parquet files found under {path / 'data'}.")
+
+
+def command_from_config(config: dict[str, Any], training: dict[str, Any], path: Path) -> list[str]:
+    repo_id = str(config["repo_id"])
+    policy_type = str(training["policy_type"])
+    job_name = str(training.get("job_name") or f"{policy_type}_{repo_id.split('/')[-1]}")
+    output_dir = str(training.get("output_dir") or Path("outputs") / "train" / job_name)
+    policy_repo_id = str(training.get("policy_repo_id") or f"local/{job_name}")
+
+    return [
+        "lerobot-train",
+        f"--dataset.repo_id={repo_id}",
+        f"--dataset.root={path}",
+        f"--policy.type={policy_type}",
+        f"--output_dir={output_dir}",
+        f"--job_name={job_name}",
+        f"--policy.device={training['device']}",
+        f"--dataset.video_backend={training['video_backend']}",
+        f"--steps={training['steps']}",
+        f"--batch_size={training['batch_size']}",
+        f"--log_freq={training['log_freq']}",
+        f"--save_freq={training['save_freq']}",
+        f"--wandb.enable={str(training['wandb_enable']).lower()}",
+        f"--policy.repo_id={policy_repo_id}",
+    ]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Start LeRobot training from a JSON recording config.")
+    parser.add_argument(
+        "--config",
+        default="configs/record_pick_cube.json",
+        help="Path to the JSON config file.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print the command without running it.")
+    args = parser.parse_args()
+
+    config = load_config(Path(args.config))
+    training = training_config(config)
+    path = dataset_root(config)
+    validate_dataset(path)
+
+    command = command_from_config(config, training, path)
+    print("Training policy")
+    print(f"  dataset: {config['repo_id']}")
+    print(f"  dataset root: {path}")
+    print(f"  policy: {training['policy_type']}")
+    print(f"  steps: {training['steps']}")
+    print(f"  batch size: {training['batch_size']}")
+    print(f"  video backend: {training['video_backend']}")
+    print()
+    print(" ".join(command))
+
+    if args.dry_run:
+        return
+
+    if shutil.which("lerobot-train") is None:
+        raise FileNotFoundError("lerobot-train was not found in PATH. Activate your LeRobot env first.")
+
+    env = os.environ.copy()
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", str(training["pytorch_alloc_conf"]))
+    subprocess.run(command, check=True, env=env)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(f"Training failed: {exc}", file=sys.stderr)
+        raise

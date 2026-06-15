@@ -20,6 +20,18 @@
   "image_format": "jpg",
   "image_quality": 95,
   "action_source": "auto",
+  "training": {
+    "policy_type": "act",
+    "job_name": "act_cube_v2",
+    "output_dir": "outputs/train/act_cube_v2",
+    "device": "cuda",
+    "steps": 10000,
+    "batch_size": 4,
+    "log_freq": 100,
+    "save_freq": 1000,
+    "wandb_enable": false,
+    "video_backend": "pyav"
+  },
   "cameras": [
     {
       "name": "cam_top",
