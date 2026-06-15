@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 cd "${REPO_ROOT}"
+export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 echo "Running joint-state reader..."
 echo "  left  -> ${LEFT_CAN}"
@@ -17,7 +18,7 @@ echo "  right -> ${RIGHT_CAN}"
 echo "  period -> ${PERIOD}s"
 echo
 
-python test_read_state.py \
+python tools/test_read_state.py \
     --left-can "${LEFT_CAN}" \
     --right-can "${RIGHT_CAN}" \
     --period "${PERIOD}"

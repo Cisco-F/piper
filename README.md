@@ -25,7 +25,7 @@
 因此当前推荐的读取命令是：
 
 ```bash
-python test_read_state.py --left-can can2 --right-can can0
+PYTHONPATH=src python tools/test_read_state.py --left-can can2 --right-can can0
 ```
 
 仓库里也提供了配套脚本：
@@ -34,22 +34,22 @@ python test_read_state.py --left-can can2 --right-can can0
   拉起左臂 `can2` 和右臂 `can0`
 - [scripts/run_read_state.sh](/home/murphy/code/piper-towel-fold/scripts/run_read_state.sh:1)
   按当前映射运行关节状态读取
-- [scripts/run_record_pick_cube.sh](/home/murphy/code/piper-towel-fold/scripts/run_record_pick_cube.sh:1)
-  按当前三摄映射启动抓方块 LeRobot 录制
+- [scripts/start_recording.sh](/home/murphy/code/piper-towel-fold/scripts/start_recording.sh:1)
+  按配置文件启动抓方块 LeRobot 录制
 
 ## 代码结构
 
-- [test_read_state.py](/home/murphy/code/piper-towel-fold/test_read_state.py:1)
+- [tools/test_read_state.py](/home/murphy/code/piper-towel-fold/tools/test_read_state.py:1)
   当前运行入口。连接双臂并按周期打印关节角度。
-- [piper.py](/home/murphy/code/piper-towel-fold/piper.py:1)
+- [src/piper_towel_fold/piper.py](/home/murphy/code/piper-towel-fold/src/piper_towel_fold/piper.py:1)
   `LeRobot` 风格的 `PiperRobot` 实现，负责连接、读取观测、读取主臂 action、断开连接。
-- [recorder.py](/home/murphy/code/piper-towel-fold/recorder.py:1)
+- [src/piper_towel_fold/recorder.py](/home/murphy/code/piper-towel-fold/src/piper_towel_fold/recorder.py:1)
   LeRobot episode recorder，直接写 `LeRobotDataset`；同时保留 JSONL 调试 recorder。
-- [record_episode.py](/home/murphy/code/piper-towel-fold/record_episode.py:1)
+- [src/piper_towel_fold/record_episode.py](/home/murphy/code/piper-towel-fold/src/piper_towel_fold/record_episode.py:1)
   第一轮试采集入口，适合先录“抓方块”。
-- [test_cameras.py](/home/murphy/code/piper-towel-fold/test_cameras.py:1)
+- [tools/test_cameras.py](/home/murphy/code/piper-towel-fold/tools/test_cameras.py:1)
   探测 OpenCV 摄像头编号，并保存每路快照。
-- [__init__.py](/home/murphy/code/piper-towel-fold/__init__.py:1)
+- [src/piper_towel_fold/config.py](/home/murphy/code/piper-towel-fold/src/piper_towel_fold/config.py:1)
   `PiperRobotConfig` 定义。
 - [technical-roadmap.md](/home/murphy/code/piper-towel-fold/technical-roadmap.md:1)
   长期技术路线。
@@ -130,19 +130,19 @@ python -c "import lerobot, piper_sdk; print('imports ok')"
 如果你更想直接调用 Python，也可以：
 
 ```bash
-python test_read_state.py --left-can can2 --right-can can0
+PYTHONPATH=src python tools/test_read_state.py --left-can can2 --right-can can0
 ```
 
 如果左右从臂对应的 CAN 口不同，按实际情况修改：
 
 ```bash
-python test_read_state.py --left-can <left_can> --right-can <right_can>
+PYTHONPATH=src python tools/test_read_state.py --left-can <left_can> --right-can <right_can>
 ```
 
 如果你想调打印频率，可以加 `--period`：
 
 ```bash
-python test_read_state.py --left-can can2 --right-can can0 --period 0.2
+PYTHONPATH=src python tools/test_read_state.py --left-can can2 --right-can can0 --period 0.2
 ```
 
 这里 `--period 0.2` 表示每 0.2 秒打印一次，也就是 5 Hz。
@@ -172,7 +172,7 @@ right: j1= -11.222 deg, j2=  22.333 deg, j3= -33.444 deg, j4=  44.555 deg, j5= -
 先用从臂状态作为 action 做 smoke test：
 
 ```bash
-python record_episode.py \
+PYTHONPATH=src python -m piper_towel_fold.record_episode \
   --task pick_cube \
   --dataset-format lerobot \
   --repo-id local/piper_pick_cube \
@@ -187,7 +187,7 @@ python record_episode.py \
 如果主臂也接到了工控机 CAN，并且可以读取主臂角度，则优先录主臂 action：
 
 ```bash
-python record_episode.py \
+PYTHONPATH=src python -m piper_towel_fold.record_episode \
   --task pick_cube \
   --dataset-format lerobot \
   --repo-id local/piper_pick_cube \
@@ -205,7 +205,7 @@ python record_episode.py \
 先探测摄像头编号：
 
 ```bash
-python test_cameras.py --indices 0,1,2,3,4,5
+python tools/test_cameras.py --indices 0,1,2,3,4,5
 ```
 
 脚本会把能打开的画面保存到：
@@ -214,7 +214,7 @@ python test_cameras.py --indices 0,1,2,3,4,5
 data/camera_probe/
 ```
 
-摄像头编号不是按视角命名的，也不一定连续。它们是 Linux/OpenCV 看到的设备编号，和 USB 插口、系统枚举顺序有关，所以可能是 `0,1,2`，也可能是 `0,2,4` 或 `1,3,5`。必须以 `test_cameras.py` 快照和实际录制视频为准。
+摄像头编号不是按视角命名的，也不一定连续。它们是 Linux/OpenCV 看到的设备编号，和 USB 插口、系统枚举顺序有关，所以可能是 `0,1,2`，也可能是 `0,2,4` 或 `1,3,5`。必须以 `tools/test_cameras.py` 快照和实际录制视频为准。
 
 当前实测视频内容是：
 
@@ -232,7 +232,7 @@ data/camera_probe/
 也就是 `2 -> cam_top`，`4 -> cam_left`，`0 -> cam_right`。完整录制命令：
 
 ```bash
-python record_episode.py \
+PYTHONPATH=src python -m piper_towel_fold.record_episode \
   --task pick_cube \
   --dataset-format lerobot \
   --repo-id local/piper_pick_cube \
@@ -251,13 +251,33 @@ python record_episode.py \
   --prompt-outcome
 ```
 
-也可以用启动脚本。主臂 CAN 口用环境变量传入：
+现在也可以直接用配置文件启动，默认配置在 [configs/record_pick_cube.json](/home/murphy/code/piper-towel-fold/configs/record_pick_cube.json:1)。常改的项目都已经放进去，包括：
+
+- 录制帧率 `fps`
+- 左右臂 CAN 口
+- 相机映射 `cameras[].ref`
+- 相机名称 `cameras[].name`
+- 相机分辨率和采集帧率
+
+默认启动：
 
 ```bash
-LEADER_LEFT_CAN=<leader_left_can> \
-LEADER_RIGHT_CAN=<leader_right_can> \
-./scripts/run_record_pick_cube.sh
+./scripts/start_recording.sh
 ```
+
+使用其他配置文件：
+
+```bash
+./scripts/start_recording.sh configs/your_record_config.json
+```
+
+也可以直接用配置文件启动脚本：
+
+```bash
+./scripts/start_recording.sh
+```
+
+如果要录 leader action，直接修改 [configs/record_pick_cube.json](/home/murphy/code/piper-towel-fold/configs/record_pick_cube.json:1) 里的 `leader_left_can` 和 `leader_right_can`。
 
 ## 训练 ACT 策略
 
@@ -325,7 +345,7 @@ outputs/train/act_piper_pick_cube/checkpoints/last/pretrained_model
 先用已录好的数据做离线回放检查：
 
 ```bash
-python offline_infer.py \
+PYTHONPATH=src python -m piper_towel_fold.offline_infer \
   --policy-path outputs/train/act_piper_pick_cube/checkpoints/last/pretrained_model \
   --repo-id local/piper_pick_cube \
   --dataset-root data/lerobot/local/piper_pick_cube \

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+cd "${REPO_ROOT}"
+export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
 POLICY_PATH="${POLICY_PATH:-outputs/train/act_piper_pick_cube/checkpoints/last/pretrained_model}"
 REPO_ID="${REPO_ID:-local/piper_pick_cube}"
 DATASET_ROOT="${DATASET_ROOT:-data/lerobot/local/piper_pick_cube}"
@@ -33,7 +39,8 @@ PRINT_EVERY="${PRINT_EVERY:-1}"
 LOG_JSONL="${LOG_JSONL:-}"
 
 args=(
-  run_policy_live.py
+  -m
+  piper_towel_fold.run_policy_live
   --policy-path "$POLICY_PATH"
   --repo-id "$REPO_ID"
   --dataset-root "$DATASET_ROOT"

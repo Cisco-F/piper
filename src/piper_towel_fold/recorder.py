@@ -228,6 +228,7 @@ class LeRobotEpisodeRecorder:
         self.dataset_root.parent.mkdir(parents=True, exist_ok=True)
 
         if (self.dataset_root / "meta" / "info.json").exists():
+            self._validate_existing_features(features)
             resume = getattr(LeRobotDataset, "resume", None)
             if callable(resume):
                 self.dataset = resume(repo_id=self.repo_id, root=self.dataset_root)
@@ -297,6 +298,22 @@ class LeRobotEpisodeRecorder:
                 "names": IMAGE_DIMENSION_NAMES,
             }
         return features
+
+    def _validate_existing_features(self, expected_features: dict[str, dict[str, Any]]) -> None:
+        info_path = self.dataset_root / "meta" / "info.json"
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        existing_features = info.get("features", {})
+        if not isinstance(existing_features, dict):
+            return
+
+        expected_keys = set(expected_features.keys())
+        existing_keys = set(existing_features.keys())
+        if expected_keys != existing_keys:
+            raise ValueError(
+                "Existing dataset schema does not match the current recording schema. "
+                f"Expected features {sorted(expected_keys)}, found {sorted(existing_keys)}. "
+                "Use a new repo_id/root for the new camera layout, or remove the old dataset first."
+            )
 
     def _state_vector(self, values: dict[str, Any]) -> np.ndarray:
         return np.asarray([float(values.get(key, 0.0)) for key in ARM_STATE_KEYS], dtype=np.float32)

@@ -10,7 +10,7 @@
 - `PiperRobot` 可以连接左右从臂
 - `PiperRobot` 可选连接左右主臂，并读取主臂 action
 - 可以读取左右臂 6 个关节角和夹爪状态
-- 有独立测试脚本 `test_read_state.py`
+- 有独立测试脚本 `tools/test_read_state.py`
 - 已实测确认 CAN 映射：左臂 `can2`，右臂 `can0`
 - 已补充 CAN 拉起脚本和状态读取启动脚本
 - 已确认主臂控制从臂功能良好
@@ -36,7 +36,7 @@
 
 验收标准：
 
-- 运行 `python test_read_state.py --left-can <left> --right-can <right>` 成功
+- 运行 `PYTHONPATH=src python tools/test_read_state.py --left-can <left> --right-can <right>` 成功
 - 左右各 6 个关节角随手动运动实时变化
 - 左右夹爪状态能变化
 - 连续运行 10 分钟不中断
@@ -98,7 +98,7 @@
 
 验收标准：
 
-- `python record_episode.py --dataset-format lerobot --task pick_cube --action-source follower --duration 30` 可成功生成 dataset
+- `PYTHONPATH=src python -m piper_towel_fold.record_episode --dataset-format lerobot --task pick_cube --action-source follower --duration 30` 可成功生成 dataset
 - `data/lerobot/local/piper_pick_cube/` 下有 `data/`、`meta/`、`videos/`
 - `observation.state` 和 `action` 都是 14 维
 - 录制过程可用 `Ctrl+C` 安全停止
@@ -120,8 +120,8 @@
 
 验收标准：
 
-- `python test_cameras.py --indices 0,1,2,3,4,5` 能找到 3 路可用画面
-- `record_episode.py --camera-indices 2,4,0 --camera-names cam_top,cam_left,cam_right` 能同时保存 3 路视频
+- `python tools/test_cameras.py --indices 0,1,2,3,4,5` 能找到 3 路可用画面
+- `python -m piper_towel_fold.record_episode --camera-indices 2,4,0 --camera-names cam_top,cam_left,cam_right` 能同时保存 3 路视频
 - LeRobot dataset 中存在 `observation.images.cam_top`、`observation.images.cam_left`、`observation.images.cam_right`
 - 机械臂状态、action 和图像能同时采样
 - 数据字段命名稳定，不再频繁变动
@@ -176,7 +176,7 @@
 
 建议的最近两步：
 
-1. 用 `record_episode.py` 录 5 到 10 条抓方块短 episode。
+1. 用 `python -m piper_towel_fold.record_episode` 录 5 到 10 条抓方块短 episode。
 2. 用三摄像头直接录制一条 LeRobot smoke test，并加载检查。
 
 ## 推荐执行顺序

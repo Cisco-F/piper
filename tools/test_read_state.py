@@ -2,8 +2,8 @@ import argparse
 import math
 import time
 
-from __init__ import PiperRobotConfig
-from piper import PiperRobot
+from piper_towel_fold.config import PiperRobotConfig
+from piper_towel_fold.piper import PiperRobot
 
 
 def format_arm_state(obs: dict, side: str) -> str:

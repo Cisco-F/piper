@@ -4,7 +4,13 @@ from typing import Any
 
 import torch
 
-from offline_infer import action_tensor_to_dict, get_episode_bounds, load_dataset, load_policy, select_policy_inputs
+from piper_towel_fold.offline_infer import (
+    action_tensor_to_dict,
+    get_episode_bounds,
+    load_dataset,
+    load_policy,
+    select_policy_inputs,
+)
 
 
 def parse_args() -> argparse.Namespace:

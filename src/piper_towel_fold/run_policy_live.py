@@ -9,10 +9,10 @@ import numpy as np
 import torch
 from lerobot.cameras.opencv import OpenCVCameraConfig
 
-from __init__ import PiperRobotConfig
-from offline_infer import action_tensor_to_dict, load_dataset, load_policy
-from piper import PiperRobot
-from recorder import ARM_STATE_KEYS
+from .config import PiperRobotConfig
+from .offline_infer import action_tensor_to_dict, load_dataset, load_policy
+from .piper import PiperRobot
+from .recorder import ARM_STATE_KEYS
 
 
 def parse_csv(value: str) -> list[str]:

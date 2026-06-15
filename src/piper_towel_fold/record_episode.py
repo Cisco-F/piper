@@ -6,9 +6,9 @@ from pathlib import Path
 
 from lerobot.cameras.opencv import OpenCVCameraConfig
 
-from __init__ import PiperRobotConfig
-from piper import PiperRobot
-from recorder import LeRobotEpisodeRecorder, PiperEpisodeRecorder
+from .config import PiperRobotConfig
+from .piper import PiperRobot
+from .recorder import LeRobotEpisodeRecorder, PiperEpisodeRecorder
 
 
 def resolve_action_source(args: argparse.Namespace) -> str:
@@ -110,7 +110,7 @@ def install_stop_handler() -> tuple[dict[str, bool], object]:
     return stop_requested, previous_handler
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Record a minimal Piper teleop episode.")
     parser.add_argument("--task", default="pick_cube", help="Task name stored in metadata.")
     parser.add_argument(
@@ -167,10 +167,16 @@ def main() -> None:
         default="auto",
         help="Use leader joints as actions when available, otherwise follower joints.",
     )
-    args = parser.parse_args()
+    return parser
 
+
+def validate_args(args: argparse.Namespace) -> None:
     if args.fps <= 0:
         raise ValueError("--fps must be greater than 0.")
+
+
+def run_recording(args: argparse.Namespace) -> None:
+    validate_args(args)
 
     camera_configs = make_camera_configs(args)
     action_source = resolve_action_source(args)
@@ -260,6 +266,12 @@ def main() -> None:
             outcome=outcome,
             stop_reason=stop_reason,
         )
+
+
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+    run_recording(args)
 
 
 if __name__ == "__main__":

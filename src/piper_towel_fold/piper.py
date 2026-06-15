@@ -8,10 +8,7 @@ from lerobot.utils.decorators import check_if_already_connected, check_if_not_co
 
 from lerobot.robots import Robot
 
-try:
-    from . import PiperRobotConfig
-except ImportError:
-    from __init__ import PiperRobotConfig
+from .config import PiperRobotConfig
 
 try:
     from piper_sdk import C_PiperInterface_V2
