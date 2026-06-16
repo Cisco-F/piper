@@ -157,7 +157,7 @@ def print_action_summary(prefix: str, action: dict[str, float]) -> None:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a trained LeRobot policy on the real Piper robot.")
     parser.add_argument(
         "--policy-path",
@@ -203,11 +203,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--print-every", type=int, default=1, help="Print every N policy steps.")
     parser.add_argument("--log-jsonl", default="", help="Optional JSONL path for live rollout diagnostics.")
-    return parser.parse_args()
+    return parser
 
 
-def main() -> None:
-    args = parse_args()
+def parse_args() -> argparse.Namespace:
+    return build_arg_parser().parse_args()
+
+
+def run_live_policy(args: argparse.Namespace) -> None:
     if args.fps <= 0:
         raise ValueError("--fps must be greater than 0.")
     if not 0.0 < args.smoothing_alpha <= 1.0:
@@ -342,6 +345,10 @@ def main() -> None:
             log_file.close()
         if robot.is_connected:
             robot.disconnect()
+
+
+def main() -> None:
+    run_live_policy(parse_args())
 
 
 if __name__ == "__main__":

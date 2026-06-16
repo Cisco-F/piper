@@ -32,6 +32,26 @@
     "wandb_enable": false,
     "video_backend": "pyav"
   },
+  "policy_live": {
+    "policy_path": "outputs/train/act_cube_v2/checkpoints/last/pretrained_model",
+    "repo_id": "local/cube_v2",
+    "dataset_root": "data/lerobot/local/cube_v2",
+    "video_backend": "pyav",
+    "device": "cuda",
+    "execute": false,
+    "duration": 10.0,
+    "fps": 10.0,
+    "control_speed": 10,
+    "max_joint_step_rad": 0.025,
+    "max_gripper_step_m": 0.001,
+    "gripper_effort": 1000,
+    "smoothing_alpha": 0.25,
+    "pace_by_reach": false,
+    "advance_threshold_rad": 0.08,
+    "max_hold_steps": 30,
+    "print_every": 1,
+    "log_jsonl": ""
+  },
   "cameras": [
     {
       "name": "cam_top",

@@ -360,26 +360,45 @@ PYTHONPATH=src python -m piper_towel_fold.offline_infer \
 ./scripts/run_policy_live.sh
 ```
 
-确认预测值没有明显跳变后，再短时间执行。第一次建议只跑 3 到 5 秒，并把手放在急停附近：
+它默认读取 [configs/record_pick_cube.json](configs/record_pick_cube.json) 里的 `policy_live` 配置。常改的项目包括：
+
+- `policy_path`: 本地 checkpoint 目录，例如 `outputs/train/act_cube_v2/checkpoints/last/pretrained_model`
+- `repo_id` 和 `dataset_root`: 用来加载训练数据集统计量
+- `device`: `cuda` 或 `cpu`
+- `execute`: 是否真的下发动作；第一次保持 `false`
+- `duration` 和 `fps`: 真机运行时长和控制频率
+- `max_joint_step_rad`、`max_gripper_step_m`、`smoothing_alpha`: 实时动作限速和平滑参数
+
+也可以传入其他配置文件：
 
 ```bash
-EXECUTE=true DURATION=3 ./scripts/run_policy_live.sh
+./scripts/run_policy_live.sh configs/your_record_config.json
+```
+
+确认预测值没有明显跳变后，再把配置里的 `execute` 改成 `true` 并短时间执行。第一次建议只跑 3 到 5 秒，并把手放在急停附近：
+
+```json
+"policy_live": {
+  "execute": true,
+  "duration": 3.0
+}
 ```
 
 实时执行默认做了两层保守处理：
 
-- `SMOOTHING_ALPHA=0.25`: 对 policy 输出做指数平滑
-- `MAX_JOINT_STEP_RAD=0.025`: 每个控制周期每个关节最多走约 1.4 度
-- `MAX_GRIPPER_STEP_M=0.001`: 每个控制周期夹爪最多变化 1 mm
+- `smoothing_alpha: 0.25`: 对 policy 输出做指数平滑
+- `max_joint_step_rad: 0.025`: 每个控制周期每个关节最多走约 1.4 度
+- `max_gripper_step_m: 0.001`: 每个控制周期夹爪最多变化 1 mm
 
 如果真机动作太慢，可以逐步放宽，例如：
 
-```bash
-EXECUTE=true \
-DURATION=5 \
-MAX_JOINT_STEP_RAD=0.04 \
-SMOOTHING_ALPHA=0.4 \
-./scripts/run_policy_live.sh
+```json
+"policy_live": {
+  "execute": true,
+  "duration": 5.0,
+  "max_joint_step_rad": 0.04,
+  "smoothing_alpha": 0.4
+}
 ```
 
 不要在第一次执行时把限速直接调很大。离线误差即使看起来不错，实时相机延迟、起始姿态偏差、物体位置变化都会让第一版策略产生更大的动作误差。
