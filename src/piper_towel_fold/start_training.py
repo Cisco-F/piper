@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "wandb_enable": False,
     "video_backend": "pyav",
     "pytorch_alloc_conf": "expandable_segments:True",
+    "tolerance_s": 5.0,  # 添加了这一行
 }
 
 
@@ -95,7 +96,7 @@ def command_from_config(config: dict[str, Any], training: dict[str, Any], path: 
     output_dir = str(training.get("output_dir") or Path("outputs") / "train" / job_name)
     policy_repo_id = str(training.get("policy_repo_id") or f"local/{job_name}")
 
-    return [
+    cmd = [
         "lerobot-train",
         f"--dataset.repo_id={repo_id}",
         f"--dataset.root={path}",
@@ -111,6 +112,12 @@ def command_from_config(config: dict[str, Any], training: dict[str, Any], path: 
         f"--wandb.enable={str(training['wandb_enable']).lower()}",
         f"--policy.repo_id={policy_repo_id}",
     ]
+    
+    # 添加容差参数（如果配置中有的话）
+    if "tolerance_s" in training:
+        cmd.append(f"--tolerance_s={training['tolerance_s']}")
+    
+    return cmd
 
 
 def main() -> None:

@@ -78,7 +78,11 @@ def load_policy(policy_path: str, device: str):
     except ImportError:
         from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
-    config = PreTrainedConfig.from_pretrained(policy_path)
+    # config = PreTrainedConfig.from_pretrained(policy_path)
+    config = PreTrainedConfig.from_pretrained(
+    policy_path,
+    local_files_only=True  # 只在本地查找
+)
     config.pretrained_path = policy_path
     config.device = device
 
